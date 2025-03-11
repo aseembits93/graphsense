@@ -398,56 +398,58 @@ class GraphInfer:
     # Function to track execution time and peak RAM usage
     def infer(self, line, top_k=10):
         """
-        get top k suggestions for next code line
+        Get top k suggestions for the next code line.
         
         Args:
-            line (str): current code line
-            top_k (int): top k suggestions to return (default: 10)
+            line (str): Current code line.
+            top_k (int): Top k suggestions to return (default: 10).
         """
-
-        if self.index == None or self.idx_to_line == None or self.line_to_idx == None or self.txt_embed_index == None or self.txt_embed_model == None:
+        if any(attr is None for attr in [self.index, self.idx_to_line, self.line_to_idx, self.txt_embed_index, self.txt_embed_model]):
             print("Please load artifacts first using: load_artifacts()")
             sys.exit(1)
 
-        query_index = None
-        top_k = top_k + 1 # top vector is always same vector so we remove it
-        idx_bytes = self.line_to_idx.get(line.encode())
-
-        if idx_bytes:
-            query_index = struct.unpack("i", idx_bytes)[0]  # Unpack the 4-byte integer
-            print(f"Index: {query_index}")
-        else:
+        # Adjust top_k to include the query vector position
+        top_k += 1
+        
+        # Get the index of the input line if it exists
+        query_index = self._line_to_index(line)
+        if query_index is None:
             print("Line not found")
-            try:
-                # handle OOV
-                oov_vector = self.txt_embed_model.encode(line)
-                # Reshape to (1, dim), Faiss expects a 2D array for a single query
-                oov_vector = np.expand_dims(oov_vector, axis=0)
-
-                oov_vector = self.loaded_pca.transform(oov_vector) # reduce dimensions to 128
-                
-                oov_vector = oov_vector.astype(np.float16)
-
-                # Perform FAISS search
-                distances, indices = self.txt_embed_index.search(oov_vector, 1)
-                # Retrieve syntactically matching line
-                matched_line = self.idx_to_line.get(struct.pack("i", indices[0][0])).decode()
-                print("oov matched to: ", matched_line)
-                query_index = indices[0][0]
-                query_index = int(query_index)
-                print(f"Matched Index: {query_index}")
-            except Exception:
+            query_index = self._handle_oov(line)
+            if query_index is None:
                 print("Error: ensure PCA model is in output/artifacts. If model was not created due to low vocabulary size, increase unique code lines in dataset and train again.")
                 return []
-        
+
         # Load vector dynamically using index to minimize memory usage
-        query_vector = np.array([self.index.reconstruct(query_index)], dtype=np.float16)  # Dynamically load vector using FAISS
+        query_vector = np.array([self.index.reconstruct(query_index)], dtype=np.float16)
         
         # Perform FAISS search
         distances, indices = self.index.search(query_vector, top_k)
 
         # Retrieve similar lines using direct indexing
         similar_lines = [self.idx_to_line.get(struct.pack("i", idx)).decode() for idx in indices[0]]
-        similar_lines = similar_lines[1:]   # remove top vector as it is same as query vector
-        return similar_lines
+        # Remove top vector as it is the same as the query vector
+        return similar_lines[1:]
+
+    def _line_to_index(self, line):
+        """Helper function to convert a line to its corresponding index."""
+        idx_bytes = self.line_to_idx.get(line.encode())
+        if idx_bytes:
+            return struct.unpack("i", idx_bytes)[0]
+        return None
+
+    def _handle_oov(self, line):
+        """Handle out-of-vocabulary (OOV) lines by finding the closest line embedding."""
+        try:
+            # Encode and transform the OOV vector
+            oov_vector = self.txt_embed_model.encode(line)
+            oov_vector = self.loaded_pca.transform(np.expand_dims(oov_vector, axis=0)).astype(np.float16)
+
+            # Perform FAISS search for the closest match
+            distances, indices = self.txt_embed_index.search(oov_vector, 1)
+            matched_line = self.idx_to_line.get(struct.pack("i", indices[0][0])).decode()
+            print(f"oov matched to: {matched_line}")
+            return int(indices[0][0])
+        except Exception:
+            return None
 
