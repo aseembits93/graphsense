@@ -39,8 +39,8 @@ class GraphTrain:
         stripped = line.strip()
 
         # Handle block comments (triple quotes)
-        if stripped.startswith('"""') or stripped.startswith("'''"):
-            if (stripped.endswith('"""') or stripped.endswith("'''")) and (stripped != '"""' and stripped != "'''"):
+        if stripped.startswith(('"""', "'''")):
+            if (stripped.endswith(('"""', "'''")) and len(stripped) > 3):
                 # If the line contains both start and end of block comment, treat it as a single-line comment
                 return True, False
             elif in_block_comment:
@@ -50,11 +50,11 @@ class GraphTrain:
                 # If we are not inside a block comment, this starts it
                 return True, True
 
-        if stripped.endswith('"""') or stripped.endswith("'''"):
+        if stripped.endswith(('"""', "'''")):
             return True, False
 
         # Handle single-line comments (#, //, C-style)
-        if stripped.startswith("#") or stripped.startswith("//"):
+        if stripped.startswith(("#", "//")):
             return True, False
 
         # Handle C-style block comments (/* ... */)
